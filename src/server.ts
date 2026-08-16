@@ -109,6 +109,22 @@ function procStartSec(pid: number): number | undefined {
   } catch { return undefined }
 }
 
+/** 僵尸进程判定：Linux /proc state=='Z'；macOS ps stat 含 'Z'；Windows 无僵尸态 */
+function isZombie(pid: number): boolean {
+  try {
+    if (process.platform === 'linux') {
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf-8')
+      const after = stat.slice(stat.lastIndexOf(')') + 2).split(' ')
+      return after[0] === 'Z'
+    }
+    if (process.platform === 'darwin') {
+      const r = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { timeout: 8000 })
+      return /Z/.test(r.stdout.toString('utf-8'))
+    }
+  } catch { /* 进程已消失 */ }
+  return false
+}
+
 function taskAdopt(args: any) {
   // 三证据收养判定（对齐 dsh-witness）：① lock 解析 ② 进程存活 ③ 启动时间比对（防僵尸/PID 复用）
   // 僵尸进程教训（macOS CI 实测）：SIGKILL 后父进程未回收，kill(pid,0) 对僵尸仍成功——第三证据判死
@@ -120,12 +136,13 @@ function taskAdopt(args: any) {
   const lockStart = Number(m[2])
   let alive = true
   try { process.kill(pid, 0) } catch { alive = false }
+  if (alive && isZombie(pid)) alive = false   // 僵尸：SIGKILL 后父进程未回收，进程表项残留（启动时间不变）——状态位判死
   if (alive) {
     const cur = procStartSec(pid)
     if (cur === undefined || cur === lockStart) {
       return { content: [{ type: 'text', text: JSON.stringify({ state: 'running', pid, lock }) }] }
     }
-    alive = false   // 启动时间不匹配：僵尸残留或 PID 复用 → 判死
+    alive = false   // 启动时间不匹配：PID 复用 → 判死
   }
   const exitRaw = readMaybe(path.join(jobDir, 'exit.txt'))
   const verdict = exitRaw !== undefined ? `finalized-from-exit ${exitRaw.trim()}` : 'crashed-before-exit (orphaned, finalize failed)'
