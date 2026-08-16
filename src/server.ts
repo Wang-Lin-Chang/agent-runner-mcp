@@ -85,19 +85,51 @@ function taskKill(args: any) {
   return { content: [{ type: 'text', text: JSON.stringify({ killed: true, pid: Number(m[1]), note: 'adoption evidence preserved: lock content + exit protocol' }) }] }
 }
 
+/** 进程启动时间（epoch 秒，三平台公式；失败返回 undefined——保守失败语义） */
+function procStartSec(pid: number): number | undefined {
+  try {
+    if (process.platform === 'win32') {
+      const r = spawnSync('powershell', ['-NoProfile', '-Command', `[int](Get-Date -Date (Get-Process -Id ${pid}).StartTime.ToUniversalTime() -UFormat %s)`], { timeout: 5000, windowsHide: true })
+      const t = Number(r.stdout.toString('utf-8').trim())
+      return Number.isFinite(t) && t > 0 ? t : undefined
+    }
+    if (process.platform === 'linux') {
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf-8')
+      const after = stat.slice(stat.lastIndexOf(')') + 2).split(' ')
+      const btime = Number(fs.readFileSync('/proc/stat', 'utf-8').match(/btime (\d+)/)?.[1] ?? 0)
+      const t = Math.floor(btime + Number(after[19]) / 100)
+      return Number.isFinite(t) && t > 0 ? t : undefined
+    }
+    const MONTHS: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 }
+    const r = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], { timeout: 8000 })
+    const m = /^\w+\s+(\w+)\s+(\d+)\s+(\d+):(\d+):(\d+)\s+(\d+)$/.exec(r.stdout.toString('utf-8').trim())
+    if (m === null) return undefined
+    const t = Math.floor(new Date(Number(m[6]), MONTHS[m[1]], Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5])).getTime() / 1000)
+    return Number.isFinite(t) && t > 0 ? t : undefined
+  } catch { return undefined }
+}
+
 function taskAdopt(args: any) {
-  // 三证据收养判定（MCP 层简化版）：lock 解析 + 进程存活 + 终态落盘
+  // 三证据收养判定（对齐 dsh-witness）：① lock 解析 ② 进程存活 ③ 启动时间比对（防僵尸/PID 复用）
+  // 僵尸进程教训（macOS CI 实测）：SIGKILL 后父进程未回收，kill(pid,0) 对僵尸仍成功——第三证据判死
   const jobDir = String(args.jobDir ?? '')
   const lock = readMaybe(path.join(jobDir, 'lock'))
   const m = lock !== undefined ? /^(\d+):(\d+)$/.exec(lock.trim()) : null
   if (m === null) return { content: [{ type: 'text', text: JSON.stringify({ state: 'no-lock', note: 'already finalized or never started' }) }] }
   const pid = Number(m[1])
+  const lockStart = Number(m[2])
   let alive = true
   try { process.kill(pid, 0) } catch { alive = false }
-  if (alive) return { content: [{ type: 'text', text: JSON.stringify({ state: 'running', pid, lock }) }] }
+  if (alive) {
+    const cur = procStartSec(pid)
+    if (cur === undefined || cur === lockStart) {
+      return { content: [{ type: 'text', text: JSON.stringify({ state: 'running', pid, lock }) }] }
+    }
+    alive = false   // 启动时间不匹配：僵尸残留或 PID 复用 → 判死
+  }
   const exitRaw = readMaybe(path.join(jobDir, 'exit.txt'))
   const verdict = exitRaw !== undefined ? `finalized-from-exit ${exitRaw.trim()}` : 'crashed-before-exit (orphaned, finalize failed)'
-  return { content: [{ type: 'text', text: JSON.stringify({ state: exitRaw !== undefined ? 'done' : 'failed', pid, verdict, note: 'three-evidence adoption: lock pid dead + exit protocol read' }) }] }
+  return { content: [{ type: 'text', text: JSON.stringify({ state: exitRaw !== undefined ? 'done' : 'failed', pid, verdict, note: 'three-evidence adoption: lock pid dead + start-time match + exit protocol read' }) }] }
 }
 
 // ---------- MCP 协议层（JSON-RPC 2.0 over stdio） ----------
