@@ -182,8 +182,9 @@ function taskAdopt(args) {
         alive = false; // 启动时间不匹配：PID 复用 → 判死
     }
     const exitRaw = readMaybe(path.join(jobDir, 'exit.txt'));
-    const verdict = exitRaw !== undefined ? `finalized-from-exit ${exitRaw.trim()}` : 'crashed-before-exit (orphaned, finalize failed)';
-    return { content: [{ type: 'text', text: JSON.stringify({ state: exitRaw !== undefined ? 'done' : 'failed', pid, verdict, note: 'three-evidence adoption: lock pid dead + start-time match + exit protocol read' }) }] };
+    const exitMatch = exitRaw !== undefined ? /^EXIT:(-?\d+)$/.exec(exitRaw.trim()) : null;
+    const verdict = exitMatch !== null ? `finalized-from-exit ${exitMatch[0]}` : 'crashed-before-exit (exit file empty — runner truncated then died)';
+    return { content: [{ type: 'text', text: JSON.stringify({ state: exitMatch !== null ? 'done' : 'failed', pid, verdict, note: 'three-evidence adoption: lock pid dead + start-time match + exit protocol read' }) }] };
 }
 // ---------- MCP 协议层（JSON-RPC 2.0 over stdio） ----------
 const TOOLS = [
