@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '25.x'
+      # Linux job 用 bwrap 只读视图模式；ubuntu-24.04 AppArmor 禁非特权 userns → sudo 跑
+      - name: Install bubblewrap (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -y && sudo apt-get install -y bubblewrap
+      - run: npm install
+      - run: npm run build
+      - name: Test (Linux, sudo for bwrap)
+        if: runner.os == 'Linux'
+        run: sudo env "PATH=$PATH" npm test
+      - name: Test (macOS/Windows)
+        if: runner.os != 'Linux'
+        run: npm test

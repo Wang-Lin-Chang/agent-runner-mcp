@@ -1,0 +1,20 @@
+{
+  "name": "agent-runner-mcp",
+  "version": "0.1.0",
+  "description": "MCP server exposing the three-platform sandboxed runner protocol: run tasks in an evidence-protected sandbox, read the EXIT protocol, and get an autopsy report. Zero runtime dependencies. Every claim carries an experiment number.",
+  "type": "module",
+  "bin": { "agent-runner-mcp": "dist/server.js" },
+  "files": ["src/", "dist/", "vendor/", "test/", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --experimental-strip-types test/mcp-client.test.ts"
+  },
+  "keywords": ["mcp", "agent", "sandbox", "reliability", "dsh", "deepseek-harness", "claude-code", "codex"],
+  "license": "Apache-2.0",
+  "engines": { "node": ">=22.6" },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.3"
+  },
+  "author": "Wang-Lin-Chang"
+}
